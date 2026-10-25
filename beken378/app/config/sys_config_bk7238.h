@@ -189,7 +189,7 @@
 #define CFG_USE_USB_CHARGE                         0
 
 /*section 4-----DEBUG macro config-----*/
-#define CFG_UART_DEBUG                             1
+#define CFG_UART_DEBUG                             0
 #define CFG_SUPPORT_BKREG                          1
 #define CFG_ENABLE_WPA_LOG                         0
 #define IPERF_CLOSE                                0  /* close iperf */
