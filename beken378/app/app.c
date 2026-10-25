@@ -799,7 +799,153 @@ static void start_matter_app(void)
 }
 #endif
 
-extern void  user_main(void);
+/* 
+ * 文件名: app.c (直接覆盖原有内容)
+ * 描述: 采用标准分层架构，循环通过 DMA 打印 ARM9 系统识别寄存器 (MIDR)
+ */
+
+// ================== 1. 底层硬件宏定义与全局变量 ==================
+#ifndef UART_TX_BUFFER_SIZE
+#define UART_TX_BUFFER_SIZE 256
+#endif
+
+// 确保这些宏在你的 SDK 中存在（通常在 uart.h 和 gdma.h 中）
+// 如果编译报错，请全局搜索替换为你工程里的实际宏名
+#define UART_DMA_TEST_PORT      BK_UART1        
+#define UART_DMA_TX_CHANNEL     UART_TX_DMA_CHANNEL 
+
+// DMA 发送完成信号量 & 发送缓冲区
+static beken_semaphore_t dma_tx_sem = NULL;
+static UINT8 dma_send_buf[UART_TX_BUFFER_SIZE];
+
+// UART 基础配置
+static const bk_uart_config_t uart_dma_config = {
+    .baud_rate     = 115200,
+    .data_width    = BK_DATA_WIDTH_8BIT,
+    .parity        = BK_PARITY_NO,
+    .stop_bits     = BK_STOP_BITS_1,
+    .flow_control  = FLOW_CTRL_DISABLED,
+    .flags         = 0,
+};
+
+// ================== 2. 底层驱动封装层 (Hardware Abstraction) ==================
+
+// DMA 发送完成中断回调 (ISR)
+static void uart_dma_tx_finish_handler(UINT32 param)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    if (dma_tx_sem) {
+        rtos_set_semaphore(&dma_tx_sem); // 释放信号量
+    }
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+/**
+ * @brief 封装接口：初始化 UART 和 DMA 发送通道
+ */
+void uart_dma_hw_init(void)
+{
+    GDMACFG_TPYES_ST init_cfg;
+    GDMA_CFG_ST en_cfg;
+
+    // 1. 初始化 UART 硬件
+    bk_uart_initialize(UART_DMA_TEST_PORT, &uart_dma_config, NULL);
+
+    // 2. 初始化 DMA 通道
+    os_memset(&init_cfg, 0, sizeof(GDMACFG_TPYES_ST));
+    os_memset(&en_cfg, 0, sizeof(GDMA_CFG_ST));
+
+    init_cfg.dstdat_width = 8;
+    init_cfg.srcdat_width = 32;
+    init_cfg.dstptr_incr = 0;
+    init_cfg.srcptr_incr = 1;
+    init_cfg.src_start_addr = dma_send_buf;
+    init_cfg.dst_start_addr = (void *)REG_UART1_FIFO_PORT; // 指向 UART1 FIFO
+    init_cfg.channel = UART_DMA_TX_CHANNEL;
+    init_cfg.prio = 0;
+    init_cfg.half_fin_handler = NULL;
+    init_cfg.fin_handler = uart_dma_tx_finish_handler;
+    init_cfg.src_module = GDMA_X_SRC_DTCM_RD_REQ;
+    init_cfg.dst_module = GDMA_X_DST_UART1_TX_REQ;
+
+    sddev_control(GDMA_DEV_NAME, CMD_GDMA_CFG_TYPE4, (void *)&init_cfg);
+
+    en_cfg.channel = UART_DMA_TX_CHANNEL;
+    en_cfg.param = 0; // 单次发送模式
+    sddev_control(GDMA_DEV_NAME, CMD_GDMA_CFG_WORK_MODE, (void *)&en_cfg);
+}
+
+/**
+ * @brief 封装接口：启动 DMA 发送指定长度的数据
+ */
+void uart_dma_hw_send(uint32_t len)
+{
+    GDMA_CFG_ST en_cfg;
+    
+    en_cfg.channel = UART_DMA_TX_CHANNEL;
+    en_cfg.param = len; 
+    sddev_control(GDMA_DEV_NAME, CMD_GDMA_SET_TRANS_LENGTH, (void *)&en_cfg);
+    
+    en_cfg.param = 1; // 使能 DMA
+    sddev_control(GDMA_DEV_NAME, CMD_GDMA_SET_DMA_ENABLE, &en_cfg);
+}
+
+// ================== 3. 应用层业务逻辑 (Application Layer) ==================
+
+/**
+ * @brief 业务任务：循环读取 MCU ID 并通过 DMA 打印
+ */
+void uart_dma_id_task(void *arg)
+{
+    uint32_t midr;
+    int len;
+    char print_buf[128];
+
+    // 初始化信号量
+    rtos_init_semaphore(&dma_tx_sem, 1);
+
+    // 调用底层封装接口完成硬件初始化
+    uart_dma_hw_init();
+
+    bk_printf("DMA ID Task Started!\r\n");
+
+    // 核心业务循环
+    while (1) {
+        // 1. 读取 ARM9 的 MIDR 寄存器
+        __asm volatile ("MRC p15, 0, %0, c0, c0, 0" : "=r" (midr));
+
+        // 2. 格式化字符串
+        len = sprintf(print_buf, "MCU ID (MIDR): 0x%08X\r\n", midr);
+
+        // 3. 拷贝到 DMA 专用缓冲区
+        memcpy(dma_send_buf, print_buf, len);
+
+        // 4. 调用底层封装接口启动发送
+        uart_dma_hw_send(len);
+
+        // 5. 阻塞等待 DMA 完成 (让出 CPU)
+        rtos_get_semaphore(&dma_tx_sem, 1000);
+
+        // 6. 延时 1 秒
+        rtos_delay_milliseconds(1000);
+    }
+}
+
+// ================== 4. 系统总入口 (Entry Point) ==================
+
+/**
+ * @brief 真正的 user_main 入口，仅负责任务调度
+ */
+void user_main(void)
+{
+    bk_printf("%s %s\r\n", __FILE__, __FUNCTION__);
+    
+    // 创建任务，优先级 4，栈大小 2048
+    rtos_create_thread(NULL, 4, "dma_id", 
+                       (beken_thread_function_t)uart_dma_id_task, 
+                       2048, NULL);
+}
+
 void __attribute__((weak)) user_main(void)
 {
 #if (CFG_SUPPORT_MATTER)
