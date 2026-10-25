@@ -1,13 +1,13 @@
 name: Beken FreeRTOS Build
 
 on:
-  # 保留原有的自动触发条件（可选）
-  push:
-    branches: [ "master", "main" ]
-  pull_request:
-    branches: [ "master", "main" ]
+#   保留原有的自动触发条件（可选）
+#  push:
+#    branches: [ "master", "main" ]
+#  pull_request:
+#    branches: [ "master", "main" ]
   
-  # 新增手动触发条件
+#   新增手动触发条件
   workflow_dispatch:
 
 jobs:
