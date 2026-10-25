@@ -129,11 +129,53 @@ void bk_timer_test_start(void)
 	bk_timer_initialize(BKTIMER5,1000,bk_timer_test_isr_cb);
 }
 
+#include "include.h" // 引入 Beken SDK 的标准头文件
+
+// 定义一个打印系统寄存器的任务
+void sys_reg_dump_task(void *arg)
+{
+    uint32_t midr, ctr, tcm;
+
+    // 【核心】使用 ARM 内联汇编读取 CP15 协处理器寄存器
+    // MRC 指令：Move to Register from Coprocessor
+    __asm volatile (
+        "MRC p15, 0, %0, c0, c0, 0 \n"  // 读取主ID寄存器 (MIDR)
+        "MRC p15, 0, %1, c0, c0, 1 \n"  // 读取 Cache Type 寄存器 (CTR)
+        "MRC p15, 0, %2, c0, c0, 2 \n"  // 读取 TCM Status 寄存器 (TCMTR)
+        : "=r" (midr), "=r" (ctr), "=r" (tcm) // 输出操作数
+        :                                      // 无输入操作数
+        :                                      // 无破坏的寄存器
+    );
+
+    bk_printf("\r\n--- System Register Dump ---\r\n");
+    bk_printf("MIDR  (Main ID)       : 0x%08X\r\n", midr);
+    bk_printf("CTR   (Cache Type)    : 0x%08X\r\n", ctr);
+    bk_printf("TCMTR (TCM Status)    : 0x%08X\r\n", tcm);
+    bk_printf("-----------------------------\r\n\r\n");
+
+    // 打印完毕后，删除自己，释放内存
+    rtos_delete_thread(NULL);
+}
+
+// 在你的 user_main 中创建这个任务
 void user_main(void)
 {
-	bk_printf("%s %s\r\n",__FILE__,__FUNCTION__);
-	bk_timer_test_start();
+    bk_printf("%s %s\r\n", __FILE__, __FUNCTION__);
+    
+    // 创建系统寄存器打印任务
+    rtos_create_thread(NULL, 
+                       4,                    // 优先级
+                       "reg_dump",           // 任务名
+                       (beken_thread_function_t)sys_reg_dump_task, 
+                       1024,                 // 栈大小
+                       (beken_thread_arg_t)0);
 }
+
+//void user_main(void)
+//{
+//    bk_printf("%s %s\r\n",__FILE__,__FUNCTION__);
+//    bk_timer_test_start();
+//}
 
 #endif
 // eof
