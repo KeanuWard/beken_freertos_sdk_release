@@ -1,0 +1,35 @@
+name: Beken FreeRTOS Build
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 1. 下载并解压官方 10.3.1 版本的交叉编译工具链
+      - name: Install ARM GCC Toolchain 10.3.1
+        run: |
+          wget https://developer.arm.com/-/media/Files/downloads/gnu-rm/10.3-2021.10/gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2
+          tar -xjf gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2
+          # 将解压后的工具链移动到固定目录
+          sudo mv gcc-arm-none-eabi-10.3-2021.10 /opt/gcc-arm-10.3.1
+
+      # 2. 验证工具链版本
+      - name: Verify Toolchain Version
+        run: /opt/gcc-arm-10.3.1/bin/arm-none-eabi-gcc --version
+
+      # 3. 执行编译，通过环境变量传入正确的路径
+      - name: Build Beken SDK
+        env:
+          # 注意：路径必须以斜杠 / 结尾
+          FREERTOS_EXEC_PATH: /opt/gcc-arm-10.3.1/bin/
+        run: |
+          make bk7238
