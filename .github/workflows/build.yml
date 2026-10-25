@@ -33,3 +33,12 @@ jobs:
           FREERTOS_EXEC_PATH: /opt/gcc-arm-10.3.1/bin/
         run: |
           make bk7238
+
+      # 4. 上传编译产物（新增这一步）
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          # 产物名称（可自定义）
+          name: bk7238-firmware
+          # 编译生成的文件路径（请根据实际生成的目录修改，通常在 output 或 build 目录下）
+          path: output/
